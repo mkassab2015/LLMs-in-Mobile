@@ -10,25 +10,26 @@ It contains the curated patent dataset, analysis scripts, and reproducibility as
 
 ## 📁 Repository Structure
 
-LLMs-in-Mobile/
-│
-├── CPC Analysis/
-│ └── Scripts and notebooks for CPC code frequency, top 15 overall, and per-topic analysis.
-│
-├── LDA/
-│ └── LDA preprocessing and topic modeling assets (Gensim, coherence plots, pyLDAvis, word clouds).
-│
-├── Overall statistics on ntire Patents Set/
-│ └── Global-level analytics (temporal growth, jurisdictions, applicant concentration, legal status, IPC/CPC sections).
-│
-├── Patents-Topics Analysis/
-│ └── Aggregated topic-level statistics, citation means, and macro-category summaries.
-│
-├── Patents Data Set.csv
-│ └── Canonical Lens.org export — grouped by simple families, including metadata fields.
-│
-└── Patents Mapped to Topics.csv
-└── Each patent mapped to its dominant LDA topic (k=17) with posterior probabilities.
+Patents Data Set.csv
+Canonical dataset exported from Lens (family-grouped), including title, abstract, publication/filing dates, jurisdiction, assignee, inventor(s), CPC/IPC, and legal status.
+
+Patents Mapped to Topics.csv
+Each patent mapped to its LDA posterior and dominant topic (k=17), used for topic-level analytics and CPC rollups.
+
+CPC Analysis/
+Scripts/notebooks to compute (i) top-15 CPC subclasses overall (count once per family) and (ii) top-5 CPC subclasses per topic (using patents with dominant topic ≥ 0.5). Outputs include CSV tables and plots.
+
+LDA/
+Text preprocessing and topic modeling assets (Gensim LDA, coherence search, pyLDAvis, word clouds), plus the document–topic matrix.
+
+Overall statistics on ntire Patents Set/
+Corpus-level analytics: yearly filings/publications, CAGR, jurisdictional distribution, applicant concentration, legal maturity, and high-level IPC/CPC sections; exports CSV + PNG figures.
+
+Patents-Topics Analysis/
+Topic-level aggregations (counts, citations, family size/diffusion), macro-category summaries, and tables mirroring manuscript Tables/Figures (e.g., topic summaries and distributions).
+
+Top-level items visible in the GitHub tree: CPC Analysis/, LDA/, Overall statistics on ntire Patents Set/, Patents-Topics Analysis/, Patents Data Set.csv, Patents Mapped to Topics.csv. 
+GitHub
 
 ## Run the Pipeline
 
