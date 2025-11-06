@@ -1,0 +1,5 @@
+Topics for k=3 (c_v=0.3431)
+
+Topic 00: data, information, target, text, question, knowledge, obtain, first, user, result, set, answer, corresponding, training, field
+Topic 01: data, one, user, first, system, information, code, input, content, least, using, may, llm, response, query
+Topic 02: image, target, text, information, task, data, video, feature, multi, first, processing, corresponding, modal, obtain, equipment

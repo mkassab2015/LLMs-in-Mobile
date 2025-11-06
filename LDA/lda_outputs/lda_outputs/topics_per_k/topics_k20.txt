@@ -1,0 +1,22 @@
+Topics for k=20 (c_v=0.3459)
+
+Topic 00: data, training, fine, tuning, set, generation, evaluation, pre, improved, field, text, user, prediction, obtain, using
+Topic 01: one, first, data, may, user, least, llm, using, input, includes, generate, system, associated, content, plurality
+Topic 02: fault, point, frame, image, text, first, key, equipment, description, semantic, tree, graph, matrix, current, instance
+Topic 03: text, information, target, data, recognition, voice, description, obtain, corresponding, document, content, prompt, processing, medium, improved
+Topic 04: set, data, first, candidate, training, word, second, result, reasoning, value, obtain, target, corpus, text, cue
+Topic 05: knowledge, graph, data, base, entity, target, information, obtain, corresponding, improved, domain, text, field, constructing, task
+Topic 06: target, information, image, task, corresponding, processing, result, sub, field, technical, determining, equipment, node, obtaining, provides
+Topic 07: user, information, recommendation, target, object, content, corresponding, vector, recommended, behavior, scene, feature, obtain, commodity, command
+Topic 08: text, target, statement, first, generation, corresponding, information, content, sql, field, obtain, word, obtaining, least, medium
+Topic 09: test, case, function, code, detection, information, generation, vulnerability, data, interaction, security, target, script, contract, time
+Topic 10: information, query, retrieval, vector, document, text, result, database, obtain, data, event, user, target, performing, word
+Topic 11: data, information, service, target, analysis, processing, operation, corresponding, user, equipment, result, field, work, obtain, preset
+Topic 12: code, system, power, application, data, interface, agent, api, prompt, user, generation, inquiry, control, information, corresponding
+Topic 13: first, question, second, task, information, target, sample, text, answer, result, dialogue, obtain, data, set, corresponding
+Topic 14: question, answer, data, user, answering, target, text, questions, knowledge, processing, answers, improved, statement, problem, corresponding
+Topic 15: image, multi, modal, data, text, feature, module, visual, evaluation, vector, obtain, reasoning, training, used, features
+Topic 16: data, features, risk, processing, sequence, obtain, semantic, problem, feature, result, plurality, element, layer, obtaining, first
+Topic 17: instruction, user, data, operation, task, information, interaction, search, control, intelligent, robot, tool, module, action, agent
+Topic 18: medical, training, network, text, sample, record, patient, information, data, learning, obtain, electronic, target, trained, category
+Topic 19: video, feature, audio, information, entity, image, resource, generation, description, obtain, demand, text, vehicle, human, first

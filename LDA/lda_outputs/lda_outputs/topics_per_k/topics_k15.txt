@@ -1,0 +1,17 @@
+Topics for k=15 (c_v=0.3525)
+
+Topic 00: data, evaluation, training, network, text, fine, user, module, improved, knowledge, field, obtain, generation, set, prediction
+Topic 01: one, data, first, user, may, least, using, llm, input, includes, system, query, generate, associated, plurality
+Topic 02: image, text, visual, point, semantic, first, key, modal, multi, token, vector, description, obtain, equipment, training
+Topic 03: text, information, target, data, voice, recognition, description, obtain, corresponding, user, processing, document, dialogue, improved, prompt
+Topic 04: set, data, training, first, reasoning, candidate, second, result, target, obtain, word, value, text, performing, medical
+Topic 05: knowledge, graph, entity, information, target, data, base, corresponding, task, obtain, field, text, fault, performing, improved
+Topic 06: target, information, image, technical, processing, field, task, corresponding, result, equipment, obtain, generation, sub, object, provides
+Topic 07: video, user, content, information, recommendation, target, audio, corresponding, current, generation, scene, object, obtain, frame, recommended
+Topic 08: text, feature, target, features, obtain, risk, first, performing, information, field, data, result, obtaining, element, image
+Topic 09: test, medical, code, case, interaction, information, analysis, function, agent, target, data, vulnerability, intelligent, configuration, execution
+Topic 10: information, retrieval, vector, text, query, document, obtain, demand, event, target, data, result, user, database, set
+Topic 11: data, information, service, target, user, processing, operation, analysis, obtain, result, equipment, corresponding, field, preset, work
+Topic 12: system, code, multi, modal, data, power, module, agent, application, interface, task, used, api, control, intelligent
+Topic 13: first, information, second, sample, task, text, target, question, result, dialogue, data, corresponding, obtain, training, set
+Topic 14: question, answer, query, data, text, statement, target, problem, user, answering, knowledge, questions, processing, corresponding, sql

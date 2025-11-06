@@ -1,0 +1,4 @@
+Topics for k=2 (c_v=0.3256)
+
+Topic 00: data, target, text, information, question, obtain, first, result, corresponding, knowledge, user, processing, training, field, set
+Topic 01: data, user, first, one, system, information, video, code, content, input, least, using, task, llm, may

@@ -1,0 +1,33 @@
+# ==========================================
+# Upload Excel/CSV → Read column "abstract" → Compute average word count
+# ==========================================
+
+from google.colab import files
+import pandas as pd
+
+# Step 1: Upload file
+print("Please upload your Excel or CSV file...")
+uploaded = files.upload()
+
+# Step 2: Get uploaded file name
+file_name = list(uploaded.keys())[0]
+
+# Step 3: Load file (supports CSV or Excel)
+if file_name.lower().endswith(".csv"):
+    df = pd.read_csv(file_name)
+else:
+    df = pd.read_excel(file_name)
+
+# Step 4: Select the second column or 'abstract' column
+if "abstract" in df.columns:
+    abstracts = df["abstract"].astype(str)
+else:
+    abstracts = df.iloc[:, 1].astype(str)  # second column by index
+
+# Step 5: Compute word counts
+word_counts = abstracts.apply(lambda text: len(str(text).split()))
+
+# Step 6: Compute average
+average_words = word_counts.mean()
+
+print(f"\nAverage number of words in the abstract column: {average_words:.2f}")

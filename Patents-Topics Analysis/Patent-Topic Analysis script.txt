@@ -1,0 +1,319 @@
+# ============================
+# Patent–Topic Analytics (Colab)
+# ============================
+# What it does:
+# - Prompts you to upload your combined patents file (CSV or Excel)
+# - Robustly detects key columns (dominant topic, year, family size, citations, legal status, jurisdiction)
+# - Computes:
+#    * # documents per topic
+#    * distribution of dominant topics per publication year
+#    * simple family size stats per topic
+#    * citation stats per topic
+#    * legal status per topic (counts)
+#    * jurisdiction per topic (counts)
+# - Saves all outputs (CSVs + quick figures) to a timestamped folder and auto-downloads a ZIP
+
+import sys, os, io, re, zipfile, datetime
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+
+# --- Colab upload & download helpers
+IN_COLAB = False
+try:
+    from google.colab import files
+    IN_COLAB = True
+except Exception:
+    IN_COLAB = False
+
+def safe_makedirs(p):
+    os.makedirs(p, exist_ok=True)
+    return p
+
+def colab_download(path):
+    if IN_COLAB:
+        files.download(path)
+
+# ---------- Column Resolver ----------
+def standardize_colname(s):
+    return re.sub(r'[^a-z0-9]+', '', str(s).strip().lower())
+
+def resolve_columns(df, requirements):
+    """
+    requirements: dict of {logical_name: [candidate column patterns]}
+    Returns mapping {logical_name: actual_column_name} (or None if not found)
+    """
+    std_map = {standardize_colname(c): c for c in df.columns}
+    resolved = {}
+    for logical, candidates in requirements.items():
+        found = None
+        # Try exact standardized candidates
+        for cand in candidates:
+            sc = standardize_colname(cand)
+            if sc in std_map:
+                found = std_map[sc]; break
+        # Try fuzzy contains if not found
+        if not found:
+            for scn, orig in std_map.items():
+                if any(standardize_colname(cand) in scn for cand in candidates):
+                    found = orig; break
+        resolved[logical] = found
+    return resolved
+
+# ---------- Upload ----------
+if IN_COLAB:
+    print("➡️ Please upload your combined patents file (CSV or Excel).")
+    up = files.upload()
+    if not up:
+        raise RuntimeError("No file uploaded.")
+    fname = list(up.keys())[0]
+else:
+    # Fallback for non-Colab runs: set your path here
+    fname = "/content/Lens Combined.csv"
+    if not os.path.exists(fname):
+        raise FileNotFoundError(
+            "Not running in Colab and no local file found at /content/Lens Combined.csv. "
+            "Run this in Colab or update 'fname' to point to your file."
+        )
+
+# ---------- Load Data ----------
+ext = os.path.splitext(fname)[1].lower()
+if ext in [".xlsx", ".xls"]:
+    df = pd.read_excel(fname)
+else:
+    # Try utf-8 then fallback
+    try:
+        df = pd.read_csv(fname)
+    except UnicodeDecodeError:
+        df = pd.read_csv(fname, encoding="latin-1")
+
+print(f"Loaded shape: {df.shape}")
+print("Columns detected:", list(df.columns))
+
+# ---------- Column detection ----------
+# Provide generous candidate names for each logical field
+requirements = {
+    "topic": [
+        "dominant_topic_id", "dominant_topic", "topic", "lda_topic", "dominant topic id", "dominant-topic-id"
+    ],
+    "pub_year": [
+        "publication_year", "pub_year", "year", "pubyear"
+    ],
+    "pub_date": [
+        "publication_date", "pub_date", "date", "publication date"
+    ],
+    "family_size": [
+        "simple_family_size", "family_size", "simple family size", "family size", "familysize"
+    ],
+    "citations": [
+        "citations", "citation_count", "citation count", "n_citations", "cited_by", "citedbycount"
+    ],
+    "legal_status": [
+        "legal_status", "legal status", "status", "patent_status", "application_status"
+    ],
+    "jurisdiction": [
+        "jurisdiction", "publication_country", "country", "authority", "office"
+    ],
+    "doc_id": [
+        "lens_id", "document_id", "doc_id", "publication_number", "application_number", "id"
+    ],
+}
+
+resolved = resolve_columns(df, requirements)
+
+# If publication year missing, try deriving from publication date
+if not resolved["pub_year"]:
+    if resolved["pub_date"] and resolved["pub_date"] in df.columns:
+        y = pd.to_datetime(df[resolved["pub_date"]], errors="coerce").dt.year
+        df["__derived_pub_year__"] = y
+        resolved["pub_year"] = "__derived_pub_year__"
+
+# Basic sanity checks
+needed = ["topic", "pub_year"]
+missing_core = [k for k in needed if not resolved[k]]
+if missing_core:
+    print("\n❗ Could not detect required columns:", missing_core)
+    print("Here is a preview of your columns for manual inspection:\n", list(df.columns)[:50])
+    raise ValueError("Missing core columns. Please rename your columns or extend the candidates list.")
+
+# ---------- Clean / Cast ----------
+topic_col = resolved["topic"]
+df = df.copy()
+# Normalize topic to integer-like categories if possible
+def to_topic(x):
+    if pd.isna(x): return np.nan
+    try:
+        val = int(float(x))
+        return val
+    except:
+        # try stripping like "Topic 3"
+        m = re.search(r'(\d+)', str(x))
+        return int(m.group(1)) if m else np.nan
+
+df["__topic__"] = df[topic_col].apply(to_topic)
+
+year_col = resolved["pub_year"]
+df["__year__"] = pd.to_numeric(df[year_col], errors="coerce")
+
+fam_col = resolved["family_size"]
+if fam_col:
+    df["__family__"] = pd.to_numeric(df[fam_col], errors="coerce")
+else:
+    df["__family__"] = np.nan
+
+cit_col = resolved["citations"]
+if cit_col:
+    df["__cites__"] = pd.to_numeric(df[cit_col], errors="coerce")
+else:
+    df["__cites__"] = np.nan
+
+leg_col = resolved["legal_status"]
+jur_col = resolved["jurisdiction"]
+id_col  = resolved["doc_id"] if resolved["doc_id"] else None
+
+# ---------- Output folder ----------
+ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+OUT_DIR = safe_makedirs(f"/content/patent_topic_analytics_{ts}")
+FIG_DIR = safe_makedirs(os.path.join(OUT_DIR, "figures"))
+
+# ---------- 1) # of documents per topic ----------
+counts_topic = (df
+                .dropna(subset=["__topic__"])
+                .groupby("__topic__", dropna=False, as_index=False)
+                .size()
+                .rename(columns={"__topic__": "topic", "size": "n_docs"})) \
+                .sort_values("topic")
+counts_topic.to_csv(os.path.join(OUT_DIR, "documents_per_topic.csv"), index=False)
+
+# Quick bar figure
+plt.figure(figsize=(10, 5))
+plt.bar(counts_topic["topic"].astype(str), counts_topic["n_docs"])
+plt.title("Number of Documents per Dominant Topic")
+plt.xlabel("Topic")
+plt.ylabel("# Documents")
+plt.tight_layout()
+plt.savefig(os.path.join(FIG_DIR, "docs_per_topic.png"), dpi=150)
+plt.close()
+
+# ---------- 2) Distribution of dominant topics per publication year ----------
+yt = (df.dropna(subset=["__topic__", "__year__"])
+        .groupby(["__year__", "__topic__"], as_index=False)
+        .size()
+        .rename(columns={"__year__": "year", "__topic__": "topic", "size": "n_docs"}))
+
+# Wide pivot (year x topic)
+yt_pivot = yt.pivot(index="year", columns="topic", values="n_docs").fillna(0).astype(int)
+yt.to_csv(os.path.join(OUT_DIR, "year_topic_distribution_long.csv"), index=False)
+yt_pivot.to_csv(os.path.join(OUT_DIR, "year_topic_distribution_wide.csv"))
+
+# Quick stacked area (only if reasonable number of topics/years)
+if yt_pivot.shape[0] >= 1 and yt_pivot.shape[1] >= 1:
+    plt.figure(figsize=(12, 6))
+    yt_pivot.sort_index().plot(kind="area", stacked=True, ax=plt.gca())
+    plt.title("Distribution of Dominant Topics per Publication Year")
+    plt.xlabel("Year")
+    plt.ylabel("# Documents")
+    plt.legend(title="Topic", bbox_to_anchor=(1.05, 1), loc="upper left")
+    plt.tight_layout()
+    plt.savefig(os.path.join(FIG_DIR, "year_topic_distribution_area.png"), dpi=150)
+    plt.close()
+
+# ---------- 3) Simple family size stats per topic ----------
+fam_stats = (df.dropna(subset=["__topic__"])
+               .groupby("__topic__")
+               .agg(
+                   n_docs=("__family__", "size"),
+                   n_nonnull=("__family__", lambda s: s.notna().sum()),
+                   mean_family=("__family__", "mean"),
+                   median_family=("__family__", "median"),
+                   std_family=("__family__", "std"),
+                   min_family=("__family__", "min"),
+                   max_family=("__family__", "max"),
+               )
+               .reset_index()
+               .rename(columns={"__topic__": "topic"}))
+fam_stats.to_csv(os.path.join(OUT_DIR, "family_size_stats_by_topic.csv"), index=False)
+
+# ---------- 4) Citation stats per topic ----------
+cite_stats = (df.dropna(subset=["__topic__"])
+                .groupby("__topic__")
+                .agg(
+                    n_docs=("__cites__", "size"),
+                    n_nonnull=("__cites__", lambda s: s.notna().sum()),
+                    mean_citations=("__cites__", "mean"),
+                    median_citations=("__cites__", "median"),
+                    std_citations=("__cites__", "std"),
+                    min_citations=("__cites__", "min"),
+                    max_citations=("__cites__", "max"),
+                )
+                .reset_index()
+                .rename(columns={"__topic__": "topic"}))
+cite_stats.to_csv(os.path.join(OUT_DIR, "citation_stats_by_topic.csv"), index=False)
+
+# Quick bar: average citations per topic (if any data)
+if cite_stats["n_nonnull"].sum() > 0:
+    plt.figure(figsize=(10, 5))
+    plt.bar(cite_stats["topic"].astype(str), cite_stats["mean_citations"].fillna(0))
+    plt.title("Average Citations per Topic")
+    plt.xlabel("Topic")
+    plt.ylabel("Average Citations")
+    plt.tight_layout()
+    plt.savefig(os.path.join(FIG_DIR, "avg_citations_per_topic.png"), dpi=150)
+    plt.close()
+
+# ---------- 5) Legal status per topic (counts) ----------
+if leg_col and leg_col in df.columns:
+    leg_counts = (df.dropna(subset=["__topic__"])
+                    .assign(__legal__=df[leg_col].astype(str).str.strip().replace({"": np.nan}))
+                    .dropna(subset=["__legal__"])
+                    .groupby(["__topic__", "__legal__"], as_index=False)
+                    .size()
+                    .rename(columns={"__topic__": "topic", "__legal__": "legal_status", "size": "n_docs"}))
+    leg_pivot = leg_counts.pivot(index="topic", columns="legal_status", values="n_docs").fillna(0).astype(int)
+    leg_counts.to_csv(os.path.join(OUT_DIR, "legal_status_by_topic_long.csv"), index=False)
+    leg_pivot.to_csv(os.path.join(OUT_DIR, "legal_status_by_topic_wide.csv"))
+else:
+    with open(os.path.join(OUT_DIR, "legal_status_by_topic_NOT_AVAILABLE.txt"), "w") as f:
+        f.write("No legal status column detected.")
+
+# ---------- 6) Jurisdiction per topic (counts) ----------
+if jur_col and jur_col in df.columns:
+    jur_counts = (df.dropna(subset=["__topic__"])
+                    .assign(__jur__=df[jur_col].astype(str).str.strip().replace({"": np.nan}))
+                    .dropna(subset=["__jur__"])
+                    .groupby(["__topic__", "__jur__"], as_index=False)
+                    .size()
+                    .rename(columns={"__topic__": "topic", "__jur__": "jurisdiction", "size": "n_docs"}))
+    jur_pivot = jur_counts.pivot(index="topic", columns="jurisdiction", values="n_docs").fillna(0).astype(int)
+    jur_counts.to_csv(os.path.join(OUT_DIR, "jurisdiction_by_topic_long.csv"), index=False)
+    jur_pivot.to_csv(os.path.join(OUT_DIR, "jurisdiction_by_topic_wide.csv"))
+    # top-20 jurisdiction per topic as helper (tall form)
+    jur_top = (jur_counts.sort_values(["topic", "n_docs"], ascending=[True, False])
+                          .groupby("topic")
+                          .head(20))
+    jur_top.to_csv(os.path.join(OUT_DIR, "jurisdiction_by_topic_top20_per_topic.csv"), index=False)
+else:
+    with open(os.path.join(OUT_DIR, "jurisdiction_by_topic_NOT_AVAILABLE.txt"), "w") as f:
+        f.write("No jurisdiction column detected.")
+
+# ---------- Optional: dump basic per-topic document list ----------
+if id_col and id_col in df.columns:
+    per_topic_dir = safe_makedirs(os.path.join(OUT_DIR, "per_topic_doc_lists"))
+    for t, g in df.dropna(subset=["__topic__"]).groupby("__topic__"):
+        small = g[[id_col, "__year__", "__family__", "__cites__"]].copy()
+        small.columns = ["document_id", "year", "family_size", "citations"]
+        small.sort_values(["year", "document_id"], inplace=True)
+        small.to_csv(os.path.join(per_topic_dir, f"topic_{int(t)}__docs.csv"), index=False)
+
+# ---------- Zip & Download ----------
+zip_path = os.path.join("/content", f"patent_topic_analytics_{ts}.zip")
+with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+    for root, _, files_in_dir in os.walk(OUT_DIR):
+        for fn in files_in_dir:
+            full = os.path.join(root, fn)
+            arc = os.path.relpath(full, start=os.path.dirname(OUT_DIR))
+            zf.write(full, arcname=arc)
+
+print(f"\n✅ All outputs saved in: {OUT_DIR}")
+print(f"📦 Zipped as: {zip_path}")
+colab_download(zip_path)

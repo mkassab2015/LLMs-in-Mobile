@@ -1,0 +1,302 @@
+# ============================================================
+# Resumable, Checkpointed LDA Pipeline (k=2..20) + Auto-Download
+# - Caches results per-k to survive disconnects
+# - On resume, continues from the next unfinished k
+# - Trains best-k model once at the end to make visuals/mapping
+# ============================================================
+
+import sys, subprocess, pkgutil
+def pip_install(pkgs): subprocess.check_call([sys.executable, "-m", "pip", "install", "-q", *pkgs])
+
+required = {
+    "gensim": "gensim",
+    "pyLDAvis": "pyLDAvis==3.4.1",
+    "wordcloud": "wordcloud",
+    "openpyxl": "openpyxl",
+    "pandas": "pandas",
+    "matplotlib": "matplotlib",
+    "nltk": "nltk",
+}
+to_install = [p for m,p in required.items() if pkgutil.find_loader(m) is None]
+if to_install: pip_install(to_install)
+
+# ---- Imports
+import os, re, zipfile, io, shutil, glob, time, json, random
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+from pathlib import Path
+
+import nltk
+from nltk.corpus import stopwords
+
+from gensim.utils import simple_preprocess
+from gensim.models import CoherenceModel
+from gensim.corpora import Dictionary
+from gensim.models.ldamulticore import LdaMulticore
+
+import pyLDAvis
+from pyLDAvis.gensim_models import prepare
+
+from wordcloud import WordCloud
+from google.colab import files
+
+# ---- Settings
+USE_DRIVE = False  # <- set to True if you mounted Drive above
+BASE_DIR = Path("/content/drive/MyDrive/Colab_LDA") if USE_DRIVE else Path("/content")
+WORK_DIR = BASE_DIR / "lda_job"
+OUT = WORK_DIR / "lda_outputs"
+TOPICS_DIR = OUT / "topics_per_k"
+WCS_DIR = OUT / "wordclouds_best_k"
+STATE_PATH = WORK_DIR / "sweep_state.json"     # progress file (resumable)
+DATA_CACHE = WORK_DIR / "data_cache.parquet"   # cached cleaned data & indices
+DICT_PATH = WORK_DIR / "dictionary.gensim"     # dictionary persistence
+CORPUS_PATH = WORK_DIR / "corpus.mm"           # corpus persistence (Matrix Market)
+
+for p in [WORK_DIR, OUT, TOPICS_DIR, WCS_DIR]:
+    p.mkdir(parents=True, exist_ok=True)
+
+# Ensure stopwords installed
+try:
+    _ = stopwords.words('english')
+except LookupError:
+    nltk.download('stopwords', quiet=True)
+
+# ---- Upload (if first run) or reuse cached data
+def load_table(path):
+    p = str(path).lower()
+    if p.endswith((".xlsx", ".xls")):
+        return pd.read_excel(path, engine="openpyxl")
+    if p.endswith(".csv"):
+        for enc in [None, "utf-8", "utf-8-sig", "latin-1"]:
+            try:
+                return pd.read_csv(path, encoding=enc) if enc else pd.read_csv(path)
+            except Exception:
+                continue
+        raise ValueError("Could not read CSV with common encodings.")
+    raise ValueError("Please upload a .xlsx/.xls or .csv")
+
+def clean_and_tokenize(text: str, stop_en):
+    text = text.lower()
+    text = re.sub(r'https?://\S+|www\.\S+', ' ', text)
+    text = re.sub(r'<.*?>', ' ', text)
+    toks = simple_preprocess(text, deacc=True, min_len=3, max_len=30)
+    return [t for t in toks if t not in stop_en]
+
+# Attempt to reuse cached data; if missing, prompt upload and build
+if DATA_CACHE.exists() and DICT_PATH.exists() and CORPUS_PATH.exists():
+    print("Reusing cached preprocessed data and corpus…")
+    df_use = pd.read_parquet(DATA_CACHE)
+    from gensim.corpora import MmCorpus
+    dictionary = Dictionary.load(str(DICT_PATH))
+    corpus = list(MmCorpus(str(CORPUS_PATH)))
+    # Recover tokenized docs for coherence computation
+    tokenized = [row.split() for row in df_use["abstract_clean"]]
+else:
+    print("Please upload your Excel (.xlsx/.xls) or CSV file…")
+    uploaded = files.upload()
+    if not uploaded:
+        raise RuntimeError("No file uploaded.")
+    infile = list(uploaded.keys())[0]
+    print(f"Uploaded: {infile}")
+
+    df = load_table(infile)
+    if df.shape[1] < 2:
+        raise ValueError("Input must have at least two columns; the 2nd column is used as abstracts.")
+
+    abstracts = df.iloc[:, 1].astype(str).fillna("").tolist()
+    stop_en = set(stopwords.words('english'))
+
+    print("Preprocessing abstracts…")
+    tokenized_all = [clean_and_tokenize(t, stop_en) for t in abstracts]
+    nonempty_idx = [i for i, toks in enumerate(tokenized_all) if toks]
+    if len(nonempty_idx) < len(tokenized_all):
+        print(f"Note: {len(tokenized_all) - len(nonempty_idx)} empty/near-empty rows removed.")
+    tokenized = [tokenized_all[i] for i in nonempty_idx]
+    df_use = df.iloc[nonempty_idx].reset_index(drop=True).copy()
+    df_use["abstract_original"] = df_use.iloc[:, 1].astype(str).values
+    df_use["abstract_clean"] = [" ".join(toks) for toks in tokenized]
+
+    # Build dictionary+corpus and persist
+    dictionary = Dictionary(tokenized)
+    dictionary.filter_extremes(no_below=2, no_above=0.5, keep_n=20000)
+    corpus = [dictionary.doc2bow(doc) for doc in tokenized]
+    dictionary.save(str(DICT_PATH))
+    from gensim.corpora import MmCorpus
+    MmCorpus.serialize(str(CORPUS_PATH), corpus)
+    df_use.to_parquet(DATA_CACHE, index=False)
+
+# ---- Params
+k_min, k_max = 2, 20
+random_state = 42
+passes = 8
+iterations = 120
+chunksize = 2000
+workers = os.cpu_count() or 2
+
+# ---- Load or initialize sweep state
+if STATE_PATH.exists():
+    with open(STATE_PATH, "r", encoding="utf-8") as f:
+        state = json.load(f)
+    print("Loaded existing sweep state.")
+else:
+    state = {"coherence": {}, "topics_words": {}}
+    with open(STATE_PATH, "w", encoding="utf-8") as f:
+        json.dump(state, f)
+
+# ---- Resume-aware sweep
+start_time = time.time()
+total = (k_max - k_min + 1)
+done = len(state["coherence"])
+print(f"Starting/Resuming sweep: {done}/{total} k-values already completed.")
+
+def save_state():
+    tmp = STATE_PATH.with_suffix(".tmp")
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(state, f)
+    os.replace(tmp, STATE_PATH)
+
+for k in range(k_min, k_max + 1):
+    if str(k) in state["coherence"]:
+        # Already done — ensure per-k text exists (best effort)
+        txt_path = TOPICS_DIR / f"topics_k{k}.txt"
+        if not txt_path.exists():
+            with open(txt_path, "w", encoding="utf-8") as f:
+                words = state["topics_words"].get(str(k), [])
+                cv = state["coherence"].get(str(k), float("nan"))
+                f.write(f"Topics for k={k} (c_v={cv:.4f})\n\n")
+                for tid, w in enumerate(words):
+                    f.write(f"Topic {tid:02d}: {', '.join(w)}\n")
+        continue
+
+    # Train LDA for this k
+    lda = LdaMulticore(
+        corpus=corpus,
+        id2word=dictionary,
+        num_topics=k,
+        random_state=random_state,
+        chunksize=chunksize,
+        passes=passes,
+        iterations=iterations,
+        alpha='asymmetric',
+        eta='auto',
+        workers=workers,
+        eval_every=None
+    )
+
+    # Coherence (c_v)
+    cm = CoherenceModel(model=lda, texts=tokenized, dictionary=dictionary, coherence='c_v')
+    cv = float(cm.get_coherence())
+    topics_words = [[w for w,_ in lda.show_topic(tid, topn=15)] for tid in range(k)]
+
+    # Persist per-k artifacts
+    with open(TOPICS_DIR / f"topics_k{k}.txt", "w", encoding="utf-8") as f:
+        f.write(f"Topics for k={k} (c_v={cv:.4f})\n\n")
+        for tid, words in enumerate(topics_words):
+            f.write(f"Topic {tid:02d}: {', '.join(words)}\n")
+
+    # Update state & checkpoint
+    state["coherence"][str(k)] = cv
+    state["topics_words"][str(k)] = topics_words
+    save_state()
+
+    # Progress log
+    done += 1
+    elapsed = time.time() - start_time
+    print(f"[{done:02d}/{total}] k={k:2d}  c_v={cv:.4f} | elapsed={elapsed/60:.1f} min", flush=True)
+
+# ---- After sweep: choose best k
+coh_items = sorted((int(k), v) for k, v in state["coherence"].items())
+coh_df = pd.DataFrame({"k": [k for k,_ in coh_items], "c_v": [v for _,v in coh_items]})
+coh_csv = OUT / "coherence_scores.csv"
+coh_df.to_csv(coh_csv, index=False)
+
+plt.figure(figsize=(7,4.5))
+plt.plot(coh_df["k"], coh_df["c_v"], marker="o")
+plt.title("LDA Coherence (c_v) vs k")
+plt.xlabel("k (number of topics)")
+plt.ylabel("c_v coherence")
+plt.grid(True, alpha=0.3)
+plt.savefig(OUT / "coherence_plot.png", bbox_inches="tight", dpi=160)
+plt.close()
+
+best_idx = coh_df["c_v"].idxmax()
+best_k = int(coh_df.loc[best_idx, "k"])
+best_cv = float(coh_df.loc[best_idx, "c_v"])
+print(f"\nBest k by c_v: k={best_k} (c_v={best_cv:.4f})")
+
+# ---- Train best-k model once for visuals/mapping
+print("Re-training best-k model for pyLDAvis/mapping…")
+best_model = LdaMulticore(
+    corpus=corpus,
+    id2word=dictionary,
+    num_topics=best_k,
+    random_state=random_state,
+    chunksize=chunksize,
+    passes=passes,
+    iterations=iterations,
+    alpha='asymmetric',
+    eta='auto',
+    workers=workers,
+    eval_every=None
+)
+
+# pyLDAvis
+vis = prepare(best_model, corpus, dictionary, mds='mmds')
+pyLDAvis.save_html(vis, str(OUT / f"pyLDAvis_k{best_k}.html"))
+
+# Document-topic mapping
+def dominant_topic(model, bow):
+    tp = model.get_document_topics(bow, minimum_probability=0.0)
+    return max(tp, key=lambda x: x[1])
+
+dom = [dominant_topic(best_model, bow) for bow in corpus]
+dom_ids  = [t[0] for t in dom]
+dom_probs= [t[1] for t in dom]
+
+mapping = df_use.copy()
+mapping.insert(0, "row_id_after_filter", np.arange(1, len(mapping)+1))
+mapping["dominant_topic_id"] = dom_ids
+mapping["dominant_topic_prob"] = dom_probs
+
+best_words = state["topics_words"][str(best_k)]
+mapping["dominant_topic_keywords"] = [", ".join(best_words[tid]) for tid in dom_ids]
+map_csv = OUT / f"document_topic_mapping_k{best_k}.csv"
+mapping.to_csv(map_csv, index=False)
+
+# Topics CSV and word clouds
+pd.DataFrame(
+    [{"topic_id": tid, "top_keywords": ", ".join(words)} for tid, words in enumerate(best_words)]
+).to_csv(OUT / f"topics_best_k{best_k}.csv", index=False)
+
+for tid in range(best_k):
+    freqs = dict(best_model.show_topic(tid, topn=60))
+    if not freqs: continue
+    wc = WordCloud(width=1200, height=800, background_color="white")
+    wc.generate_from_frequencies(freqs)
+    wc.to_file(str(WCS_DIR / f"wordcloud_topic_{tid}.png"))
+
+# All-runs topics summary from state (no retraining)
+all_rows = []
+for k_str, words_list in state["topics_words"].items():
+    k = int(k_str)
+    cv = float(state["coherence"][k_str])
+    for tid, words in enumerate(words_list):
+        all_rows.append({"k": k, "c_v": cv, "topic_id": tid, "top_keywords": ", ".join(words)})
+pd.DataFrame(all_rows).sort_values(["k","topic_id"]).to_csv(OUT / "all_runs_topics_summary.csv", index=False)
+
+# Pack and download
+zip_path = str(WORK_DIR / "lda_outputs.zip")
+with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+    for p in OUT.rglob("*"):
+        if p.is_file():
+            zf.write(str(p), arcname=str(p.relative_to(WORK_DIR)))
+
+print("\nPackaging complete. Initiating download…")
+files.download(zip_path)
+
+print(f"\nDONE.")
+print(f"Best k = {best_k} (c_v={best_cv:.4f})")
+print(f"Outputs: {OUT}")
+print(f"ZIP: {zip_path}")
+print(f"Total wall time: {time.time() - os.path.getmtime(STATE_PATH):.1f} sec since last resume")

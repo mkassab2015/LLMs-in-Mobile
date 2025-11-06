@@ -1,0 +1,203 @@
+# ===========================
+# Applicants → Academic/Research Classifier (Colab)
+# - Prompts file upload (Excel or CSV)
+# - Looks at "Applicants" column (case-insensitive)
+# - Splits multiple applicants per cell
+# - Classifies (University/Research vs Other) with editable keyword rules
+# - Prints summary counts + shows top academic orgs
+# - Exports a CSV of the per-applicant classification
+# ===========================
+
+import io, re, os, sys
+import pandas as pd
+
+# ---- Colab helpers for upload/download
+try:
+    from google.colab import files
+    IN_COLAB = True
+except Exception:
+    IN_COLAB = False
+
+# ---- 1) Upload the file
+if IN_COLAB:
+    print("🔼 Please upload your Excel/CSV file (e.g., .xlsx, .xls, .csv)…")
+    uploaded = files.upload()
+    if not uploaded:
+        raise SystemExit("No file uploaded.")
+    fname = next(iter(uploaded.keys()))
+    fbytes = uploaded[fname]
+else:
+    # Fallback path if running locally (edit as needed)
+    fname = "input.xlsx"
+    if not os.path.exists(fname):
+        raise SystemExit("Running outside Colab: put your file as 'input.xlsx' or adapt the code.")
+    fbytes = open(fname, "rb").read()
+
+# ---- 2) Read the file (supports Excel or CSV)
+def read_any_excel_or_csv(name: str, blob: bytes) -> pd.DataFrame:
+    lower = name.lower()
+    if lower.endswith((".xlsx", ".xls")):
+        return pd.read_excel(io.BytesIO(blob), engine="openpyxl")
+    elif lower.endswith(".csv"):
+        # Try UTF-8 first, fallback to latin-1 if needed
+        try:
+            return pd.read_csv(io.BytesIO(blob))
+        except UnicodeDecodeError:
+            return pd.read_csv(io.BytesIO(blob), encoding="latin-1")
+    else:
+        # Try Excel first, then CSV as fallback
+        try:
+            return pd.read_excel(io.BytesIO(blob), engine="openpyxl")
+        except Exception:
+            try:
+                return pd.read_csv(io.BytesIO(blob))
+            except Exception as e:
+                raise RuntimeError(f"Could not read file: {e}")
+
+df_raw = read_any_excel_or_csv(fname, fbytes)
+
+# ---- 3) Find the 'Applicants' column (case-insensitive, exact or close match)
+def find_applicants_col(df: pd.DataFrame) -> str:
+    cols = list(df.columns)
+    # direct case-insensitive exact matches
+    for c in cols:
+        if str(c).strip().lower() == "applicants":
+            return c
+    # common variants
+    candidates = ["applicant", "applicants ", "applicant(s)", "assignee", "assignees", "owners", "owner"]
+    for c in cols:
+        if str(c).strip().lower() in candidates:
+            return c
+    # fuzzy: column name contains the word 'applicant' or 'assignee'
+    for c in cols:
+        lc = str(c).lower()
+        if "applicant" in lc or "assignee" in lc or "owner" in lc:
+            return c
+    raise KeyError("Could not find the 'Applicants' column. Please rename it to 'Applicants' (any case).")
+
+app_col = find_applicants_col(df_raw)
+
+# ---- 4) Normalize and split applicants
+# We split on semicolon, comma, pipe, slash, and " & "
+SPLIT_RE = re.compile(r"\s*(?:;|,|\||/| & | and )\s*", flags=re.IGNORECASE)
+
+def split_applicants(val):
+    if pd.isna(val):
+        return []
+    parts = [p.strip() for p in SPLIT_RE.split(str(val)) if p and p.strip()]
+    # Remove stray quotes/brackets
+    parts = [re.sub(r"^[\"'\[\(]+|[\"'\]\)]+$", "", p).strip() for p in parts]
+    return [p for p in parts if p]
+
+# ---- 5) Heuristic rules for University/Research detection
+# You can expand this list as needed. Matching is case-insensitive and uses word boundaries.
+UNIVERSITY_KEYWORDS = [
+    r"\buniversity\b", r"\buniv\b", r"\buniv\.\b",
+    r"\buniversität\b", r"\buniversite\b", r"\buniversité\b",
+    r"\buniversidad\b", r"\buniversidade\b", r"\buniversità\b",
+    r"\buniversiteit\b", r"\bpolytechnic\b", r"\bpolitecnico\b",
+    r"\binstitute of technology\b", r"\btech(nological)? university\b",
+    r"\bcollege\b", r"\bgraduate school\b", r"\bÉcole\b", r"\bEcole\b",
+    r"\bfaculty of\b", r"\bschool of\b",
+    # common famous universities (cover non-English forms)
+    r"\bmit\b", r"\bharvard\b", r"\bstanford\b", r"\beth\b", r"\bepfl\b", r"\boxford\b", r"\bcambridge\b",
+    r"\btsinghua\b", r"\bpku\b", r"\bpeking university\b", r"\bkaist\b", r"\bkaust\b", r"\bnus\b", r"\bntu\b",
+]
+
+RESEARCH_ORG_KEYWORDS = [
+    r"\binstitute\b", r"\bresearch (center|centre|laboratory|lab)\b",
+    r"\bnational (lab|laboratory|research)\b",
+    r"\bacademy of sciences\b", r"\bmax planck\b", r"\bfraunhofer\b",
+    r"\bcnrs\b", r"\bcea\b", r"\bcnr\b", r"\briken\b", r"\baist\b",
+    r"\binria\b", r"\bniict?\b", r"\bnims\b", r"\bsintef\b", r"\btno\b", r"\bimec\b",
+    r"\bcern\b", r"\bsri international\b",
+]
+
+# Optional: patterns that often indicate "not academic"
+NON_ACADEMIC_HINTS = [
+    r"\binc\.?\b", r"\bltd\.?\b", r"\bco\.?\b", r"\bcorp\.?\b", r"\bcorporation\b", r"\bcompany\b",
+    r"\bgmbh\b", r"\bsa\b", r"\bs\.?p\.?a\.?\b", r"\bs\.?a\.?s\.?\b", r"\bllc\b", r"\bplc\b", r"\bkg\b"
+]
+
+UNIV_RE = re.compile("|".join(UNIVERSITY_KEYWORDS), flags=re.IGNORECASE)
+RES_RE  = re.compile("|".join(RESEARCH_ORG_KEYWORDS), flags=re.IGNORECASE)
+NONAC_RE = re.compile("|".join(NON_ACADEMIC_HINTS), flags=re.IGNORECASE)
+
+def classify_applicant(name: str):
+    n = (name or "").strip()
+    base = n.lower()
+
+    # Positive hits
+    if UNIV_RE.search(n):
+        return True, "university_keyword"
+    if RES_RE.search(n):
+        return True, "research_org_keyword"
+
+    # Negative hints (not definitive—just a hint)
+    if NONAC_RE.search(n):
+        return False, "company_suffix_hint"
+
+    # Fallback heuristic: if it contains 'lab' or 'institute' without company hints
+    if re.search(r"\b(lab|laborator|institute)\b", base) and not NONAC_RE.search(n):
+        return True, "generic_research_word"
+
+    return False, "no_academic_indicator"
+
+# ---- 6) Build the exploded per-applicant DataFrame
+rows = []
+for idx, val in df_raw[app_col].items():
+    for ap in split_applicants(val):
+        is_acad, reason = classify_applicant(ap)
+        rows.append({
+            "row_index": idx,
+            "applicant": ap,
+            "is_university_or_research": is_acad,
+            "reason": reason
+        })
+
+if not rows:
+    raise SystemExit("No applicants found after splitting. Check the 'Applicants' column content.")
+
+df_applicants = pd.DataFrame(rows)
+
+# ---- 7) Summaries
+total_rows = len(df_raw)
+rows_with_any_academic = (
+    df_applicants.groupby("row_index")["is_university_or_research"].any().sum()
+)
+total_applicant_entries = len(df_applicants)
+academic_entries = int(df_applicants["is_university_or_research"].sum())
+non_academic_entries = total_applicant_entries - academic_entries
+unique_academic_institutions = (
+    df_applicants.loc[df_applicants["is_university_or_research"], "applicant"]
+    .str.strip().str.lower().nunique()
+)
+
+print("=========== SUMMARY ===========")
+print(f"Total records (rows) in file:                 {total_rows}")
+print(f"Rows with at least one academic applicant:    {rows_with_any_academic}")
+print(f"Total applicant entries (after splitting):    {total_applicant_entries}")
+print(f"Academic/research entries (count):            {academic_entries}")
+print(f"Non-academic/other entries (count):           {non_academic_entries}")
+print(f"Unique academic/research institutions:        {unique_academic_institutions}")
+print("---------------------------------------------")
+print("👉 The requested figure (number of university/research centers in the Applicants column):")
+print(f"    {unique_academic_institutions} (unique institutions)")
+print("---------------------------------------------")
+
+# Show top academic institutions by frequency
+top_n = 25
+top_academic = (
+    df_applicants[df_applicants["is_university_or_research"]]
+    .assign(applicant_norm=lambda d: d["applicant"].str.strip())
+    .groupby("applicant_norm").size().sort_values(ascending=False).head(top_n)
+)
+print(f"\nTop {top_n} academic/research applicants by frequency:\n")
+display(top_academic.to_frame("count"))
+
+# ---- 8) Save classification CSV and offer download
+out_name = "applicants_classification.csv"
+df_applicants.to_csv(out_name, index=False)
+print(f"\n📄 Saved detailed classification to: {out_name}")
+if IN_COLAB:
+    files.download(out_name)

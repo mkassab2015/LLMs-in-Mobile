@@ -1,0 +1,15 @@
+Topics for k=13 (c_v=0.3702)
+
+Topic 00: question, answer, knowledge, user, data, questions, answering, text, field, problem, training, answers, retrieval, evaluation, improved
+Topic 01: one, data, user, first, may, least, llm, using, input, system, includes, query, generate, associated, response
+Topic 02: image, feature, modal, multi, text, semantic, first, vector, visual, obtain, data, features, point, fusion, key
+Topic 03: text, information, target, data, voice, recognition, description, obtain, processing, document, corresponding, improved, medium, preset, technical
+Topic 04: data, set, training, first, sample, query, result, second, obtain, candidate, word, statement, target, reasoning, prompt
+Topic 05: knowledge, graph, task, data, entity, target, information, sub, corresponding, base, obtain, text, field, result, improved
+Topic 06: target, information, task, processing, field, corresponding, technical, image, result, sub, equipment, generation, determining, obtain, relates
+Topic 07: video, content, user, information, recommendation, target, audio, current, corresponding, generation, object, short, page, sequence, obtain
+Topic 08: text, target, first, second, obtain, information, corresponding, vector, field, word, obtaining, sample, question, event, result
+Topic 09: code, test, detection, information, medical, case, generation, analysis, security, target, function, data, vulnerability, improved, report
+Topic 10: information, retrieval, demand, user, result, target, vector, tool, instruction, query, obtain, list, text, input, processing
+Topic 11: data, information, user, target, service, processing, operation, analysis, corresponding, equipment, obtain, result, table, first, field
+Topic 12: system, data, agent, module, power, multi, code, intelligent, control, application, interface, api, network, error, used

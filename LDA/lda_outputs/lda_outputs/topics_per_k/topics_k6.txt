@@ -1,0 +1,8 @@
+Topics for k=6 (c_v=0.3555)
+
+Topic 00: question, answer, data, user, information, medical, text, knowledge, target, training, field, improved, questions, answering, corresponding
+Topic 01: one, data, user, first, system, may, least, llm, using, input, generate, includes, content, query, associated
+Topic 02: agent, task, service, user, data, target, interaction, intelligent, operation, system, network, execution, first, processing, video
+Topic 03: information, text, target, image, data, obtain, feature, corresponding, user, content, processing, description, equipment, modal, video
+Topic 04: first, data, text, set, training, second, target, sample, obtain, result, word, candidate, corresponding, obtaining, plurality
+Topic 05: data, knowledge, target, information, graph, query, obtain, result, field, corresponding, processing, vector, improved, equipment, entity

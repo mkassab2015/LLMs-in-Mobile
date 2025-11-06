@@ -1,0 +1,18 @@
+Topics for k=16 (c_v=0.3650)
+
+Topic 00: data, training, network, user, fine, text, improved, field, set, tuning, pre, security, using, module, generation
+Topic 01: one, data, first, may, user, least, using, input, llm, query, includes, generate, associated, systems, plurality
+Topic 02: point, image, matrix, first, key, semantic, text, instance, equipment, frame, description, object, obtain, term, computing
+Topic 03: text, information, target, description, recognition, data, voice, obtain, corresponding, document, prompt, intention, processing, improved, preset
+Topic 04: set, data, training, candidate, first, word, result, value, obtain, reasoning, medical, second, text, target, corpus
+Topic 05: knowledge, graph, entity, information, target, data, base, obtain, corresponding, text, generation, field, improved, constructing, relationship
+Topic 06: target, information, image, processing, field, technical, corresponding, object, equipment, obtain, obtaining, relates, determining, result, provides
+Topic 07: video, user, content, information, recommendation, audio, target, current, scene, generation, object, sequence, feature, corresponding, action
+Topic 08: text, target, information, control, risk, instruction, vehicle, first, event, obtain, obtaining, field, operation, performing, generation
+Topic 09: test, case, analysis, code, information, detection, medical, classification, function, generation, target, interaction, data, configuration, report
+Topic 10: retrieval, information, vector, text, document, obtain, user, result, demand, word, performing, corresponding, database, set, list
+Topic 11: data, information, service, user, target, operation, processing, analysis, corresponding, equipment, obtain, result, work, historical, preset
+Topic 12: system, code, interface, agent, application, user, data, api, prompt, communication, module, configured, information, software, client
+Topic 13: first, task, second, sample, target, text, information, training, obtain, dialogue, result, corresponding, data, plurality, set
+Topic 14: question, answer, query, data, text, target, statement, problem, user, answering, table, questions, knowledge, processing, corresponding
+Topic 15: image, feature, multi, data, modal, text, features, module, visual, evaluation, obtain, power, reasoning, training, vector

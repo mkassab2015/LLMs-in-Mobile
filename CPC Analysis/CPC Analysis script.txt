@@ -1,0 +1,90 @@
+# ==============================================================
+# CPC Classification Analysis for Patent Dataset (Google Colab)
+# - Uploads "Lens Combined.csv"
+# - Extracts CPC codes and counts unique per patent
+# - Produces overall top 15 CPC codes
+# - Produces top 5 CPC codes per topic (assuming column "dominant_topic")
+# ==============================================================
+
+import pandas as pd
+import re
+from google.colab import files
+
+# --- Step 1: Upload file ---
+print("📂 Please upload your 'Lens Combined.csv' file")
+uploaded = files.upload()
+filename = list(uploaded.keys())[0]
+
+# --- Step 2: Load dataset ---
+df = pd.read_csv(filename)
+print(f"\n✅ Loaded dataset with {len(df)} patents and {len(df.columns)} columns.")
+
+# Inspect column names to confirm structure
+print("\nColumns available:")
+print(df.columns.tolist())
+
+# --- Step 3: Clean and extract CPC codes ---
+# Ensure consistent column naming
+cpc_col = [c for c in df.columns if "cpc" in c.lower()][0]
+topic_col = [c for c in df.columns if "topic" in c.lower()][0]
+
+def extract_cpc_codes(text):
+    if pd.isna(text):
+        return []
+    # Split on comma, semicolon, or space and extract CPC-like codes (e.g., G06N20/00)
+    codes = re.findall(r"[A-HY]\d{2}[A-Z]\s?\d+/?\d*", str(text))
+    # Clean and deduplicate
+    codes = list(set([re.sub(r"\s+", "", c) for c in codes]))
+    return codes
+
+df["CPC_codes"] = df[cpc_col].apply(extract_cpc_codes)
+
+# --- Step 4: Count top CPC codes across all patents ---
+all_codes = []
+for codes in df["CPC_codes"]:
+    all_codes.extend(codes)
+
+# Count unique per patent (avoid duplicates)
+from collections import Counter
+code_counts = Counter(all_codes)
+
+# Convert to DataFrame
+top_cpc_df = pd.DataFrame(code_counts.most_common(15), columns=["CPC_Code", "Patent_Count"])
+top_cpc_df["Percentage"] = (top_cpc_df["Patent_Count"] / len(df) * 100).round(2)
+
+print("\n📊 Top 15 CPC Codes Across All Patents:")
+print(top_cpc_df)
+
+# Save to file
+top_cpc_df.to_csv("Top15_CPC_Codes.csv", index=False)
+files.download("Top15_CPC_Codes.csv")
+
+# --- Step 5: Breakdown per topic ---
+topic_cpc_stats = []
+for topic, group in df.groupby(topic_col):
+    topic_codes = []
+    for codes in group["CPC_codes"]:
+        topic_codes.extend(codes)
+    counter = Counter(topic_codes)
+    top5 = counter.most_common(5)
+    for code, count in top5:
+        topic_cpc_stats.append({
+            "Topic": topic,
+            "CPC_Code": code,
+            "Count": count,
+            "Percentage_in_Topic": round(count / len(group) * 100, 2)
+        })
+
+topic_cpc_df = pd.DataFrame(topic_cpc_stats)
+print("\n📘 Top 5 CPC Codes per Topic:")
+print(topic_cpc_df.head(20))
+
+# Save topic-level breakdown
+topic_cpc_df.to_csv("Top5_CPC_Per_Topic.csv", index=False)
+files.download("Top5_CPC_Per_Topic.csv")
+
+# --- Step 6: Summary Statistics ---
+print("\nSummary Statistics:")
+print(f"Total patents analyzed: {len(df)}")
+print(f"Unique CPC codes: {len(code_counts)}")
+print(f"Unique topics: {df[topic_col].nunique()}")

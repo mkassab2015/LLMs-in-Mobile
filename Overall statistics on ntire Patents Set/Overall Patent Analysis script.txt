@@ -1,0 +1,410 @@
+# ============================================================
+# LLMs for Mobile Patents — Quantitative Landscape (Analyses 1–7)
+# Google Colab–ready. One cell. Upload → Run → Auto-download ZIP.
+# Charts: matplotlib only (no seaborn), one plot per figure, no explicit colors.
+# ============================================================
+
+import os, re, io, sys, json, zipfile, math
+from datetime import datetime
+import numpy as np
+import pandas as pd
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+
+# Detect Colab & enable upload/download
+IN_COLAB = False
+try:
+    from google.colab import files
+    IN_COLAB = True
+except Exception:
+    IN_COLAB = False
+
+OUTDIR = "llm_mobile_patent_outputs"
+os.makedirs(OUTDIR, exist_ok=True)
+
+# ---------- 1) Upload CSV ----------
+uploaded_path = None
+if IN_COLAB:
+    print("📎 Please upload your Lens.org CSV export…")
+    up = files.upload()
+    if not up:
+        raise SystemExit("No file uploaded.")
+    uploaded_path = list(up.keys())[0]
+    print(f"✅ Received: {uploaded_path}")
+else:
+    raise SystemExit("This script is designed for Google Colab. Please run it in Colab and upload your CSV.")
+
+# ---------- 2) Read CSV robustly ----------
+def read_csv_robust(path):
+    encodings = ["utf-8-sig", "utf-8", "cp1252"]
+    seps = [",", ";", "\t"]
+    for enc in encodings:
+        for sep in seps:
+            try:
+                df = pd.read_csv(path, encoding=enc, sep=sep, low_memory=False)
+                if df.shape[1] >= 5 and df.shape[0] >= 1:
+                    return df
+            except Exception:
+                pass
+    return pd.read_csv(path, low_memory=False)
+
+df_raw = read_csv_robust(uploaded_path)
+
+# Normalize column names (keep originals but map lookups)
+df_raw = df_raw.rename(columns={c: re.sub(r"\s+", " ", str(c)).strip() for c in df_raw.columns})
+df = df_raw.copy()
+df.columns = [c.strip() for c in df.columns]
+lower_to_actual = {c.lower(): c for c in df.columns}
+
+def get_col(*aliases):
+    for name in aliases:
+        if name.lower() in lower_to_actual:
+            return lower_to_actual[name.lower()]
+    # partial contains
+    for want in aliases:
+        for have in df.columns:
+            if want.lower() in have.lower():
+                return have
+    return None
+
+COL_PUBLICATION_DATE = get_col("Publication Date","Pub Date","Published")
+COL_FILING_DATE      = get_col("Filing Date","Application Date","Filed")
+COL_JURISDICTION     = get_col("Jurisdiction","Country","Authority","Region")
+COL_APPLICANTS       = get_col("Applicants","Assignees","Applicant","Owners","Owner")
+COL_INVENTORS        = get_col("Inventors","Inventor(s)","Inventor")
+COL_FAMILY_SIMPLE    = get_col("Simple Family ID","Family ID","Simple family ID")
+COL_IPC              = get_col("IPC","IPC Codes","IPC code(s)")
+COL_CPC              = get_col("CPC","CPC Codes","CPC code(s)")
+COL_CITATIONS        = get_col("Citations Count","Cited by Count","Forward Citations")
+COL_LEGAL_STATUS     = get_col("Legal Status","Status")
+COL_PUBLICATION_NUM  = get_col("Publication Number","Patent Number","Document ID","Pub number")
+COL_TITLE            = get_col("Title")
+
+# ---------- 3) Helpers ----------
+def to_year(series):
+    if series is None:
+        return pd.Series([np.nan]*len(df))
+    series = series.fillna("").astype(str)
+    out = []
+    for v in series:
+        v = v.strip()
+        y = None
+        for fmt in ("%Y-%m-%d","%d-%m-%Y","%m/%d/%Y","%Y/%m/%d","%Y.%m.%d"):
+            try:
+                y = datetime.strptime(v, fmt).year; break
+            except Exception:
+                pass
+        if y is None:
+            m = re.search(r"(\d{4})", v)
+            y = int(m.group(1)) if m else None
+        out.append(y if y else np.nan)
+    return pd.Series(out, index=series.index, dtype="float")
+
+def split_multi(val):
+    if pd.isna(val): return []
+    s = str(val)
+    if ";" in s: parts = [p.strip() for p in s.split(";")]
+    elif "|" in s: parts = [p.strip() for p in s.split("|")]
+    elif "||" in s: parts = [p.strip() for p in s.split("||")]
+    elif "," in s: parts = [p.strip() for p in s.split(",")]
+    else: parts = [s.strip()]
+    return [p for p in parts if p]
+
+def save_csv(df_in, name):
+    path = os.path.join(OUTDIR, f"{name}.csv")
+    df_in.to_csv(path, index=False)
+    return path
+
+def save_bar(labels, values, title, xlabel, ylabel, fname, rotation=45):
+    fig = plt.figure(figsize=(9,5))
+    x = np.arange(len(labels))
+    plt.bar(x, values)
+    plt.title(title); plt.xlabel(xlabel); plt.ylabel(ylabel)
+    plt.xticks(x, labels, rotation=rotation, ha="right"); plt.tight_layout()
+    path = os.path.join(OUTDIR, f"{fname}.png")
+    fig.savefig(path, dpi=160, bbox_inches="tight"); plt.close(fig)
+    return path
+
+def save_line(x_vals, y_lists, labels, title, xlabel, ylabel, fname):
+    fig = plt.figure(figsize=(9,5))
+    for y, lab in zip(y_lists, labels):
+        plt.plot(x_vals, y, label=lab)
+    plt.title(title); plt.xlabel(xlabel); plt.ylabel(ylabel); plt.legend(); plt.tight_layout()
+    path = os.path.join(OUTDIR, f"{fname}.png")
+    fig.savefig(path, dpi=160, bbox_inches="tight"); plt.close(fig)
+    return path
+
+def yearly_counts(series):
+    s = series.dropna().astype(int)
+    return s.value_counts().sort_index()
+
+def compute_cagr(years_list, values_list):
+    nz = [(y, v) for y, v in zip(years_list, values_list) if v > 0]
+    if len(nz) < 2: return np.nan
+    y0, v0 = nz[0]; y1, v1 = nz[-1]
+    n = max(1, y1 - y0)
+    try: return (v1 / v0)**(1/n) - 1.0
+    except Exception: return np.nan
+
+def extract_section_letter(code):
+    m = re.match(r"([A-Z])", str(code).strip(), flags=re.I)
+    return m.group(1).upper() if m else None
+
+# ---------- 4) Build working frame ----------
+work = pd.DataFrame({
+    "pub_year":      to_year(df[COL_PUBLICATION_DATE]) if COL_PUBLICATION_DATE else pd.Series([np.nan]*len(df)),
+    "filing_year":   to_year(df[COL_FILING_DATE]) if COL_FILING_DATE else pd.Series([np.nan]*len(df)),
+    "jurisdiction":  df[COL_JURISDICTION] if COL_JURISDICTION else "",
+    "applicants":    df[COL_APPLICANTS] if COL_APPLICANTS else "",
+    "inventors":     df[COL_INVENTORS] if COL_INVENTORS else "",
+    "family_simple": df[COL_FAMILY_SIMPLE] if COL_FAMILY_SIMPLE else "",
+    "ipc":           df[COL_IPC] if COL_IPC else "",
+    "cpc":           df[COL_CPC] if COL_CPC else "",
+    "citations":     pd.to_numeric(df[COL_CITATIONS], errors="coerce") if COL_CITATIONS else np.nan,
+    "legal_status":  df[COL_LEGAL_STATUS] if COL_LEGAL_STATUS else "",
+    "pub_number":    df[COL_PUBLICATION_NUM] if COL_PUBLICATION_NUM else "",
+    "title":         df[COL_TITLE] if COL_TITLE else "",
+})
+
+# ============================================================
+# ANALYSIS 1 — Temporal Trends
+# ============================================================
+filing_counts = yearly_counts(work["filing_year"])
+pub_counts    = yearly_counts(work["pub_year"])
+years = sorted(set(filing_counts.index.tolist()) | set(pub_counts.index.tolist()))
+f_vals = [int(filing_counts.get(y, 0)) for y in years]
+p_vals = [int(pub_counts.get(y, 0)) for y in years]
+cagr_filing = compute_cagr(years, f_vals) if f_vals else np.nan
+cagr_pub    = compute_cagr(years, p_vals) if p_vals else np.nan
+
+temporal_df = pd.DataFrame({"Year": years, "Filings": f_vals, "Publications": p_vals})
+save_csv(temporal_df, "A1_temporal_trends_by_year")
+save_line(years, [f_vals, p_vals], ["Filings","Publications"],
+          "Patents Over Time", "Year", "Count", "A1_temporal_trends_line")
+
+# ============================================================
+# ANALYSIS 2 — Geographic Distribution
+# ============================================================
+jur = work["jurisdiction"].fillna("").astype(str)
+jur_counts = jur[jur != ""].value_counts()
+top_jur = jur_counts.head(20).reset_index()
+top_jur.columns = ["Jurisdiction","Patents"]
+save_csv(top_jur, "A2_top20_jurisdictions")
+if not top_jur.empty:
+    save_bar(top_jur["Jurisdiction"].tolist(), top_jur["Patents"].tolist(),
+             "Top 20 Jurisdictions by Patent Count","Jurisdiction","Patents",
+             "A2_top20_jurisdictions_bar")
+
+# Family internationalization (#unique jurisdictions per simple family)
+if COL_FAMILY_SIMPLE:
+    fam_intl = work.groupby("family_simple")["jurisdiction"]\
+                   .apply(lambda s: len(set([x for x in s.astype(str) if x])))
+    fam_intl_dist = fam_intl.value_counts().sort_index().reset_index()
+    fam_intl_dist.columns = ["Unique_Jurisdictions_in_Family","Family_Count"]
+    save_csv(fam_intl_dist, "A2_family_internationalization_distribution")
+    if not fam_intl_dist.empty:
+        save_bar(fam_intl_dist["Unique_Jurisdictions_in_Family"].astype(str).tolist(),
+                 fam_intl_dist["Family_Count"].tolist(),
+                 "Family Internationalization (#Jurisdictions per Simple Family)",
+                 "# Jurisdictions","Family Count","A2_family_internationalization_bar", rotation=0)
+
+# ============================================================
+# ANALYSIS 3 — Applicants & Inventors
+# ============================================================
+def expand_multival(series):
+    rows = []
+    for idx, val in series.items():
+        for p in split_multi(val):
+            if p:
+                rows.append({"index": idx, "value": p})
+    return pd.DataFrame(rows)
+
+topN = 20
+top10_share = np.nan
+
+# Applicants
+if COL_APPLICANTS:
+    app_df = expand_multival(work["applicants"])
+    top_apps = app_df["value"].value_counts().head(topN).reset_index()
+    top_apps.columns = ["Applicant","Patents"]
+    save_csv(top_apps, "A3_top20_applicants")
+    if not top_apps.empty:
+        save_bar(top_apps["Applicant"].tolist(), top_apps["Patents"].tolist(),
+                 "Top 20 Applicants","Applicant","Patents","A3_top20_applicants_bar")
+    total = len(work)
+    if total > 0:
+        top10_share = top_apps["Patents"].head(10).sum()/total
+
+# Inventors
+if COL_INVENTORS:
+    inv_df = expand_multival(work["inventors"])
+    top_inventors = inv_df["value"].value_counts().head(topN).reset_index()
+    top_inventors.columns = ["Inventor","Patents"]
+    save_csv(top_inventors, "A3_top20_inventors")
+    if not top_inventors.empty:
+        save_bar(top_inventors["Inventor"].tolist(), top_inventors["Patents"].tolist(),
+                 "Top 20 Inventors","Inventor","Patents","A3_top20_inventors_bar")
+
+# ============================================================
+# ANALYSIS 4 — Legal Status & Maturity
+# ============================================================
+avg_active_age = np.nan
+if COL_LEGAL_STATUS:
+    ls_counts = work["legal_status"].fillna("").astype(str)
+    ls_counts = ls_counts[ls_counts != ""].value_counts().reset_index()
+    ls_counts.columns = ["Legal Status","Patents"]
+    save_csv(ls_counts, "A4_legal_status_distribution")
+    if not ls_counts.empty:
+        save_bar(ls_counts["Legal Status"].tolist(), ls_counts["Patents"].tolist(),
+                 "Legal Status Distribution","Legal Status","Patents","A4_legal_status_bar", rotation=0)
+
+    # average age of active / granted / pending (by pub year)
+    if COL_PUBLICATION_DATE:
+        active_mask = work["legal_status"].astype(str).str.lower().str.contains(
+            "active|granted|alive|in-force|pending"
+        )
+        years_col = work.loc[active_mask, "pub_year"].dropna().astype(int)
+        if not years_col.empty:
+            current_year = datetime.now().year
+            avg_active_age = float(np.round((current_year - years_col).mean(), 2))
+
+# ============================================================
+# ANALYSIS 5 — Technological Focus (IPC/CPC Sections)
+# ============================================================
+codes = []
+if COL_IPC:
+    for v in work["ipc"].fillna("").astype(str):
+        for p in split_multi(v):
+            sec = extract_section_letter(p)
+            if sec: codes.append(("IPC", sec))
+if COL_CPC:
+    for v in work["cpc"].fillna("").astype(str):
+        for p in split_multi(v):
+            sec = extract_section_letter(p)
+            if sec: codes.append(("CPC", sec))
+
+if codes:
+    tech_df = pd.DataFrame(codes, columns=["Scheme","Section"])
+    tech_counts = tech_df.groupby(["Scheme","Section"]).size().reset_index(name="Count")\
+                         .sort_values(["Scheme","Count"], ascending=[True, False])
+    save_csv(tech_counts, "A5_ipc_cpc_section_counts")
+    agg_counts = tech_df.groupby("Section").size().reset_index(name="Count")\
+                        .sort_values("Count", ascending=False)
+    save_csv(agg_counts, "A5_sections_aggregated_counts")
+    if not agg_counts.empty:
+        save_bar(agg_counts["Section"].tolist(), agg_counts["Count"].tolist(),
+                 "IPC/CPC Section Frequency (Combined)","Section","Count",
+                 "A5_sections_aggregated_bar", rotation=0)
+
+# ============================================================
+# ANALYSIS 6 — Citation Analysis
+# ============================================================
+if COL_CITATIONS:
+    top_cited = work[["citations","pub_number","title","pub_year"]].copy()
+    top_cited = top_cited.sort_values("citations", ascending=False).head(25)
+    save_csv(top_cited, "A6_top25_most_cited_patents")
+
+    now_year = datetime.now().year
+    cpyr = work.copy()
+    cpyr["age_years"] = np.where(pd.notna(cpyr["pub_year"]), now_year - cpyr["pub_year"].astype(float), np.nan)
+    cpyr["cit_per_year"] = np.where((cpyr["age_years"] > 0) & pd.notna(cpyr["citations"]),
+                                    cpyr["citations"] / cpyr["age_years"], np.nan)
+    cpyr_top = cpyr.sort_values("cit_per_year", ascending=False)\
+                   [["pub_number","title","pub_year","citations","age_years","cit_per_year"]].head(25)
+    save_csv(cpyr_top, "A6_top25_citations_per_year")
+
+    cites = work["citations"].dropna().astype(int)
+    if not cites.empty:
+        hist = pd.Series(pd.cut(cites, bins=[-1,0,1,5,10,20,50,100,1000], include_lowest=True))\
+              .value_counts().sort_index()
+        hist_df = hist.reset_index()
+        hist_df.columns = ["Citations_Bin","Patent_Count"]
+        save_csv(hist_df, "A6_citation_histogram_bins")
+        save_bar([str(x) for x in hist_df["Citations_Bin"].astype(str).tolist()],
+                 hist_df["Patent_Count"].tolist(),
+                 "Citation Count Distribution","Citations (binned)","Patents",
+                 "A6_citation_histogram_bar", rotation=45)
+
+# ============================================================
+# ANALYSIS 7 — Family Analysis
+# ============================================================
+fam_summary = {}
+if COL_FAMILY_SIMPLE:
+    fam_size = work.groupby("family_simple").size().sort_values(ascending=False).reset_index(name="Family_Size")
+    save_csv(fam_size, "A7_family_sizes")
+    fam_top = fam_size.head(25)
+    save_csv(fam_top, "A7_top25_families")
+    if not fam_top.empty:
+        save_bar([str(x) for x in fam_top["family_simple"].astype(str).tolist()],
+                 fam_top["Family_Size"].tolist(),
+                 "Top 25 Families by Size","Simple Family ID","Family Size",
+                 "A7_top25_families_bar", rotation=90)
+    fam_summary = {
+        "num_families": int(fam_size.shape[0]) if not fam_size.empty else 0,
+        "avg_family_size": float(np.round(fam_size["Family_Size"].mean(), 3)) if not fam_size.empty else float("nan"),
+        "median_family_size": float(np.round(fam_size["Family_Size"].median(), 3)) if not fam_size.empty else float("nan"),
+        "max_family_size": int(fam_size["Family_Size"].max()) if not fam_size.empty else 0,
+    }
+
+# ============================================================
+# REPORT — Human-readable guide
+# ============================================================
+temporal_notes = []
+temporal_notes.append(f"CAGR (Filings): {cagr_filing:.3%}" if pd.notna(cagr_filing) else "CAGR (Filings): n/a")
+temporal_notes.append(f"CAGR (Publications): {cagr_pub:.3%}"   if pd.notna(cagr_pub)   else "CAGR (Publications): n/a")
+
+report = []
+report.append("# LLMs for Mobile Patents — Landscape Report (Analyses 1–7)")
+report.append("This report summarizes quantitative patterns in your Lens.org dataset. Each section lists outputs and how to read them.\n")
+
+report.append("## A1. Temporal Trends")
+report.append("- Files: `A1_temporal_trends_by_year.csv`, `A1_temporal_trends_line.png`")
+report.append(f"- Interpretation: Filings vs. publications show pipeline dynamics; CAGR summarizes growth.\n  - {temporal_notes[0]}\n  - {temporal_notes[1]}")
+
+report.append("## A2. Geographic Distribution")
+report.append("- Files: `A2_top20_jurisdictions.csv`, `A2_top20_jurisdictions_bar.png`, plus `A2_family_internationalization_*` if family IDs exist.")
+report.append("- Interpretation: Top jurisdictions indicate key protection markets; family internationalization shows breadth of protection across countries.")
+
+report.append("## A3. Applicants & Inventors")
+report.append("- Files: `A3_top20_applicants.csv`, `A3_top20_applicants_bar.png`, `A3_top20_inventors.csv`, `A3_top20_inventors_bar.png`")
+if not np.isnan(top10_share):
+    report.append(f"- Concentration: Top-10 applicants’ share of patents ≈ {top10_share:.1%} (higher ⇒ more concentrated).")
+else:
+    report.append("- Concentration: Not computed (missing Applicants column).")
+
+report.append("## A4. Legal Status & Maturity")
+report.append("- Files: `A4_legal_status_distribution.csv`, `A4_legal_status_bar.png`")
+if not np.isnan(avg_active_age):
+    report.append(f"- Average age (active/granted/pending, by pub year): ~{avg_active_age} years.")
+else:
+    report.append("- Average age: Not computed (status or publication date missing).")
+
+report.append("## A5. Technological Focus (IPC/CPC Sections)")
+report.append("- Files: `A5_ipc_cpc_section_counts.csv`, `A5_sections_aggregated_counts.csv`, `A5_sections_aggregated_bar.png`")
+report.append("- Interpretation: Section letters (A–H) summarize domains (e.g., G = Physics; G06 = Computing). Peaks show where innovation clusters.")
+
+report.append("## A6. Citation Analysis")
+report.append("- Files: `A6_top25_most_cited_patents.csv`, `A6_top25_citations_per_year.csv`, `A6_citation_histogram_bins.csv`, `A6_citation_histogram_bar.png`")
+report.append("- Interpretation: Most-cited = high impact; citations/year normalizes for recency; histogram shows skew/long tail.")
+
+report.append("## A7. Family Analysis")
+report.append("- Files: `A7_family_sizes.csv`, `A7_top25_families.csv`, `A7_top25_families_bar.png`")
+if fam_summary:
+    report.append(f"- Summary: {json.dumps(fam_summary)}")
+
+with open(os.path.join(OUTDIR, "REPORT.md"), "w", encoding="utf-8") as f:
+    f.write("\n".join(report))
+
+# ---------- ZIP & auto-download ----------
+zip_path = f"{OUTDIR}.zip"
+with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+    for root, _, files_ls in os.walk(OUTDIR):
+        for f in files_ls:
+            full = os.path.join(root, f)
+            zf.write(full, os.path.relpath(full, "."))
+
+print(f"📦 Created: {zip_path}")
+if IN_COLAB:
+    print("⬇️ Downloading ZIP…")
+    files.download(zip_path)

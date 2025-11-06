@@ -1,0 +1,19 @@
+Topics for k=17 (c_v=0.3805)
+
+Topic 00: training, data, learning, medical, patient, record, fine, chinese, trained, pre, time, tuning, improved, medicine, set
+Topic 01: one, data, first, may, least, using, includes, input, generate, plurality, user, query, llm, associated, systems
+Topic 02: matrix, reasoning, network, object, first, value, memory, point, key, weight, calculation, layer, communication, cache, attention
+Topic 03: text, image, information, target, description, document, vector, obtain, feature, audio, data, recognition, video, corresponding, voice
+Topic 04: data, set, training, first, candidate, word, text, obtain, sample, second, statement, prompt, classification, fine, query
+Topic 05: knowledge, graph, data, entity, base, target, information, field, obtain, retrieval, query, vector, constructing, improved, text
+Topic 06: target, information, technical, field, corresponding, determining, equipment, resource, processing, relates, intelligence, task, artificial, models, scheme
+Topic 07: content, video, user, information, recommendation, current, target, generation, corresponding, object, commodity, message, page, recommended, command
+Topic 08: text, target, medical, information, result, data, word, processing, obtain, query, field, first, diagnosis, index, medium
+Topic 09: code, test, control, information, interaction, case, agent, generation, function, analysis, time, vulnerability, detection, instruction, intelligent
+Topic 10: information, user, event, query, search, retrieval, report, security, database, generating, input, generation, data, list, related
+Topic 11: data, information, user, target, service, processing, operation, equipment, dialogue, analysis, result, corresponding, obtain, improved, business
+Topic 12: system, user, application, interface, data, agent, response, power, api, llm, prompt, management, client, platform, intelligent
+Topic 13: first, target, task, second, information, sample, text, result, sub, processing, corresponding, obtain, tool, sequence, intention
+Topic 14: question, answer, data, problem, user, questions, answering, table, answers, target, vector, knowledge, retrieval, corresponding, text
+Topic 15: multi, feature, modal, data, image, evaluation, features, module, text, obtain, result, visual, semantic, detection, training
+Topic 16: risk, data, voice, service, assessment, input, prompt, representation, time, speech, clinical, llm, signal, plurality, network
