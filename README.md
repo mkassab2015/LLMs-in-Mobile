@@ -10,23 +10,17 @@ It contains the curated patent dataset, analysis scripts, and reproducibility as
 
 ## 📁 Repository Structure
 
-Patents Data Set.csv
-Canonical dataset exported from Lens (family-grouped), including title, abstract, publication/filing dates, jurisdiction, assignee, inventor(s), CPC/IPC, and legal status.
+Patents Data Set.csv --- Canonical dataset exported from Lens (family-grouped), including title, abstract, publication/filing dates, jurisdiction, assignee, inventor(s), CPC/IPC, and legal status.
 
-Patents Mapped to Topics.csv
-Each patent mapped to its LDA posterior and dominant topic (k=17), used for topic-level analytics and CPC rollups.
+Patents Mapped to Topics.csv --- Each patent mapped to its LDA posterior and dominant topic (k=17), used for topic-level analytics and CPC rollups.
 
-CPC Analysis/
-Scripts/notebooks to compute (i) top-15 CPC subclasses overall (count once per family) and (ii) top-5 CPC subclasses per topic (using patents with dominant topic ≥ 0.5). Outputs include CSV tables and plots.
+CPC Analysis/ -- -Scripts/notebooks to compute (i) top-15 CPC subclasses overall (count once per family) and (ii) top-5 CPC subclasses per topic (using patents with dominant topic ≥ 0.5). Outputs include CSV tables and plots.
 
-LDA/
-Text preprocessing and topic modeling assets (Gensim LDA, coherence search, pyLDAvis, word clouds), plus the document–topic matrix.
+LDA/ --- Text preprocessing and topic modeling assets (Gensim LDA, coherence search, pyLDAvis, word clouds), plus the document–topic matrix.
 
-Overall statistics on ntire Patents Set/
-Corpus-level analytics: yearly filings/publications, CAGR, jurisdictional distribution, applicant concentration, legal maturity, and high-level IPC/CPC sections; exports CSV + PNG figures.
+Overall statistics on ntire Patents Set/ --- Corpus-level analytics: yearly filings/publications, CAGR, jurisdictional distribution, applicant concentration, legal maturity, and high-level IPC/CPC sections; exports CSV + PNG figures.
 
-Patents-Topics Analysis/
-Topic-level aggregations (counts, citations, family size/diffusion), macro-category summaries, and tables mirroring manuscript Tables/Figures (e.g., topic summaries and distributions).
+Patents-Topics Analysis/ --- Topic-level aggregations (counts, citations, family size/diffusion), macro-category summaries, and tables mirroring manuscript Tables/Figures (e.g., topic summaries and distributions).
 
 Top-level items visible in the GitHub tree: CPC Analysis/, LDA/, Overall statistics on ntire Patents Set/, Patents-Topics Analysis/, Patents Data Set.csv, Patents Mapped to Topics.csv. 
 GitHub
